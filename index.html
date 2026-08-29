@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Plasma Grid">
+  <meta name="theme-color" content="#000000">
+  <meta name="format-detection" content="telephone=no">
+  <title>Plasma Grid — DBD filament analog</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="rotate-hint">
+    <div class="big">PLASMA GRID</div>
+    <div>ROTATE TO LANDSCAPE</div>
+    <div class="sub">side electrodes along the long edge</div>
+  </div>
+
+  <div id="app">
+    <div id="stage">
+      <aside id="rail" aria-label="Side electrodes">
+        <div id="bus"></div>
+        <div id="rail-head">
+          <div class="kicker">EDGE</div>
+          <div class="title">ELEC</div>
+        </div>
+        <div id="pads"></div>
+      </aside>
+      <div id="view">
+        <canvas id="field" tabindex="0"></canvas>
+        <div id="hud">
+          <span id="hud-v">V 0.34</span>
+          <span id="hud-regime">HEX</span>
+          <span id="hud-mode">SEED</span>
+        </div>
+        <div id="hint">← HOLD PADS</div>
+      </div>
+    </div>
+
+    <div id="controls">
+      <label id="v-wrap" for="v-slider">
+        <span class="lab">DRIVE V</span>
+        <input id="v-slider" type="range" min="0" max="100" value="34" step="1">
+      </label>
+      <button type="button" id="btn-seed" class="on" aria-pressed="true">SEED</button>
+      <button type="button" id="btn-kill" aria-pressed="false">KILL</button>
+      <button type="button" id="btn-pulse">PULSE</button>
+      <button type="button" id="btn-reset">RESET</button>
+    </div>
+  </div>
+
+  <script src="sim.js"></script>
+</body>
+</html>
