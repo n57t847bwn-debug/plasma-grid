@@ -16,27 +16,30 @@
   <div id="rotate-hint">
     <div class="big">PLASMA GRID</div>
     <div>ROTATE TO LANDSCAPE</div>
-    <div class="sub">side electrodes along the long edge</div>
+    <div class="sub">one stick · 0 in the center · right attracts</div>
   </div>
 
   <div id="app">
     <div id="stage">
-      <aside id="rail" aria-label="Side electrodes">
-        <div id="bus"></div>
+      <aside id="rail" aria-label="Electrode stick">
         <div id="rail-head">
-          <div class="kicker">ELEC V</div>
-          <div class="title">→ ON</div>
+          <div class="kicker">OFF ←</div>
+          <div class="title">0 → ATTRACT</div>
         </div>
-        <div id="pads"></div>
+        <div id="stick">
+          <div id="zero"></div>
+          <div id="rows"></div>
+          <div id="thumb"></div>
+        </div>
       </aside>
       <div id="view">
         <canvas id="field" tabindex="0"></canvas>
         <div id="hud">
           <span id="hud-v">V 0.34</span>
           <span id="hud-regime">HEX</span>
-          <span id="hud-mode">SEED</span>
+          <span id="hud-mode">GATE ON</span>
         </div>
-        <div id="hint">SWIPE → ON  ·  ← OFF</div>
+        <div id="hint">RIGHT ATTRACTS · DIAGONAL = GROUP · WAVE</div>
       </div>
     </div>
 
@@ -45,9 +48,9 @@
         <span class="lab">DRIVE V</span>
         <input id="v-slider" type="range" min="0" max="100" value="34" step="1">
       </label>
-      <button type="button" id="btn-seed" class="on" aria-pressed="true">SEED</button>
-      <button type="button" id="btn-kill" aria-pressed="false">KILL</button>
-      <button type="button" id="btn-pulse">PULSE</button>
+      <button type="button" id="btn-on" class="on" aria-pressed="true">ON</button>
+      <button type="button" id="btn-zero">0</button>
+      <button type="button" id="btn-wave">WAVE</button>
       <button type="button" id="btn-reset">RESET</button>
     </div>
   </div>

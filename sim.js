@@ -1,28 +1,29 @@
 /* Plasma Grid
    Continuous-CA analog of a dielectric-barrier-discharge filament lattice.
    NOT a PIC plasma solver. NOT Conway's Game of Life.
-   Activator I (filament brightness) + inhibitor Q (dielectric surface charge).
-   Mexican-hat / difference-of-Gaussians coupling → preferred hexagonal spacing.
-   Left-edge electrodes seed or quench domains.
+   Left stick: center = 0, right attracts plasma, left is off.
+   Diagonal swipe paints a group. ON/0 slams the pattern. WAVE travels.
 */
 (() => {
   "use strict";
 
   const N_EL = 16;
-  const R = 5.6; // preferred lattice constant, in cells
+  const R = 5.6;
 
   const field = document.getElementById("field");
   const ctx = field.getContext("2d", { alpha: false });
-  const padsRoot = document.getElementById("pads");
   const rail = document.getElementById("rail");
+  const stick = document.getElementById("stick");
+  const rowsRoot = document.getElementById("rows");
+  const thumb = document.getElementById("thumb");
   const hudV = document.getElementById("hud-v");
   const hudRegime = document.getElementById("hud-regime");
   const hudMode = document.getElementById("hud-mode");
   const hint = document.getElementById("hint");
   const vSlider = document.getElementById("v-slider");
-  const btnSeed = document.getElementById("btn-seed");
-  const btnKill = document.getElementById("btn-kill");
-  const btnPulse = document.getElementById("btn-pulse");
+  const btnOn = document.getElementById("btn-on");
+  const btnZero = document.getElementById("btn-zero");
+  const btnWave = document.getElementById("btn-wave");
   const btnReset = document.getElementById("btn-reset");
 
   const off = document.createElement("canvas");
@@ -38,15 +39,17 @@
   let kdx, kdy, kw, kN;
 
   let V = 0.34;
-  let mode = "seed"; // seed | kill
-  const elV = new Float32Array(N_EL); // per-electrode voltage, 0 = off, 1 = full
-  const ptrPad = new Map(); // pointerId -> pad index
+  const elV = new Float32Array(N_EL);
+  const memory = new Float32Array(N_EL);
+  let gateOn = true;
 
-  let pulseOn = false;
-  let pulseI = 0;
-  let pulseDir = 1;
-  let pulseAcc = 0;
-  const PULSE_DT = 0.085;
+  let waveOn = false;
+  let wavePos = 0;
+  let waveDir = 1;
+  let waveAcc = 0;
+  const WAVE_SPEED = 7.5; // electrodes per second
+
+  const dragging = new Map(); // pointerId -> { e, on }
 
   let interacted = false;
   let dpr = 1, cssW = 1, cssH = 1;
@@ -109,6 +112,44 @@
     return [y0, y1];
   }
 
+  function waveAmp(e) {
+    if (!waveOn) return 0;
+    const d = e - wavePos;
+    return Math.exp(-(d * d) / (2 * 1.55 * 1.55));
+  }
+
+  function writeAmp(e) {
+    const g = gateOn ? elV[e] : 0;
+    const w = waveAmp(e);
+    return g > w ? g : w;
+  }
+
+  function attractAt(e, amp, dt, kick) {
+    if (amp < 0.04) return;
+    const [y0, y1] = elRows(e);
+    const xMax = kick ? 8 : 7;
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < xMax && x < W; x++) {
+        const i = y * W + x;
+        const fall = Math.exp(-x / (kick ? 2.6 : 2.15)) * amp;
+        I[i] = Math.min(1.25, I[i] + (kick ? 0.85 : 0.36 * dt) * fall);
+        Q[i] *= 1 - 0.18 * fall;
+      }
+    }
+  }
+
+  function quenchAt(e, amp) {
+    const [y0, y1] = elRows(e);
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < 12 && x < W; x++) {
+        const i = y * W + x;
+        const fall = Math.exp(-x / 4.2) * amp;
+        I[i] *= 1 - 0.72 * fall;
+        Q[i] = Math.min(1.8, Q[i] + 0.4 * fall);
+      }
+    }
+  }
+
   function step(dt) {
     const n = W * H;
     const convK = 0.15 + 0.10 * V;
@@ -118,7 +159,6 @@
     const noiseAmp = 0.001 + 0.012 * V * V;
     const onTh = 0.18 - 0.06 * V;
 
-    // mexican-hat convolution
     for (let i = 0; i < n; i++) {
       const x = i % W;
       const y = (i / W) | 0;
@@ -147,33 +187,22 @@
       I2[i] = v;
     }
 
-    // electrodes: each row is a voltage slider. amp 0 = off.
-    {
-      const seed = mode === "seed";
-      for (let e = 0; e < N_EL; e++) {
-        let amp = elV[e];
-        if (pulseOn && pulseI === e) amp = Math.max(amp, 1);
-        if (amp < 0.04) continue;
-        const [y0, y1] = elRows(e);
-        const xMax = seed ? 7 : 16;
-        for (let y = y0; y < y1; y++) {
-          for (let x = 0; x < xMax && x < W; x++) {
-            const i = y * W + x;
-            if (seed) {
-              const fall = Math.exp(-x / 2.15) * amp;
-              I2[i] = Math.min(1.25, I2[i] + 0.34 * fall * dt);
-              Q[i] *= 1 - 0.16 * fall;
-            } else {
-              const fall = Math.exp(-x / 4.6) * amp;
-              I2[i] *= 1 - 0.62 * fall;
-              Q[i] = Math.min(1.8, Q[i] + 0.36 * fall * dt);
-            }
-          }
+    // right side of the stick attracts plasma at the lip; wave is a traveling bump
+    for (let e = 0; e < N_EL; e++) {
+      const amp = writeAmp(e);
+      if (amp < 0.04) continue;
+      const [y0, y1] = elRows(e);
+      const deep = waveOn ? 10 : 7;
+      for (let y = y0; y < y1; y++) {
+        for (let x = 0; x < deep && x < W; x++) {
+          const i = y * W + x;
+          const fall = Math.exp(-x / (waveOn ? 3.1 : 2.15)) * amp;
+          I2[i] = Math.min(1.25, I2[i] + 0.38 * fall * dt);
+          Q[i] *= 1 - 0.16 * fall;
         }
       }
     }
 
-    // surface charge: deposited by firing, slow decay, spreads (memory + exclusion halo)
     for (let i = 0; i < n; i++) {
       const x = i % W;
       const y = (i / W) | 0;
@@ -197,7 +226,6 @@
     let t = u / 1.22;
     if (t < 0) t = 0;
     else if (t > 1) t = 1;
-    // lift a faint violet floor so hex packing reads as a glow, not binary dots
     t = t * 0.92 + (t > 0.04 ? 0.08 * Math.sqrt(t) : 0);
     return (t * 255) | 0;
   }
@@ -225,35 +253,24 @@
     ctx.globalAlpha = 1;
     ctx.drawImage(off, 0, 0, dw, dh);
 
-    // bloom: additive upscale of the same low-res field
     ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = 0.45;
     ctx.drawImage(off, 0, 0, dw, dh);
     ctx.globalAlpha = 0.28;
     ctx.drawImage(off, -dw * 0.01, -dh * 0.01, dw * 1.02, dh * 1.02);
 
-    // electrode injection glow along the left lip
-    {
-      const cellW = dw / W;
-      const cellH = dh / H;
-      const seed = mode === "seed";
-      for (let e = 0; e < N_EL; e++) {
-        let amp = elV[e];
-        if (pulseOn && pulseI === e) amp = Math.max(amp, 1);
-        if (amp < 0.04) continue;
-        const [y0, y1] = elRows(e);
-        const g = ctx.createLinearGradient(0, 0, cellW * 8, 0);
-        if (seed) {
-          g.addColorStop(0, "rgba(230,120,255," + (0.35 + 0.55 * amp).toFixed(3) + ")");
-          g.addColorStop(1, "rgba(120,0,180,0)");
-        } else {
-          g.addColorStop(0, "rgba(255,80,50," + (0.35 + 0.55 * amp).toFixed(3) + ")");
-          g.addColorStop(1, "rgba(80,0,0,0)");
-        }
-        ctx.fillStyle = g;
-        ctx.globalAlpha = 0.7;
-        ctx.fillRect(0, y0 * cellH, cellW * 9, (y1 - y0) * cellH);
-      }
+    const cellW = dw / W;
+    const cellH = dh / H;
+    for (let e = 0; e < N_EL; e++) {
+      const amp = writeAmp(e);
+      if (amp < 0.04) continue;
+      const [y0, y1] = elRows(e);
+      const g = ctx.createLinearGradient(0, 0, cellW * 10, 0);
+      g.addColorStop(0, "rgba(230,120,255," + (0.3 + 0.6 * amp).toFixed(3) + ")");
+      g.addColorStop(1, "rgba(120,0,180,0)");
+      ctx.fillStyle = g;
+      ctx.globalAlpha = 0.75;
+      ctx.fillRect(0, y0 * cellH, cellW * 11, (y1 - y0) * cellH);
     }
 
     ctx.globalCompositeOperation = "source-over";
@@ -270,18 +287,8 @@
   function updateHud() {
     hudV.textContent = "V " + V.toFixed(2);
     hudRegime.textContent = regimeName();
-    hudMode.textContent = mode.toUpperCase();
-    hudMode.style.color = mode === "kill" ? "#f86" : "#e9f";
-  }
-
-  function setMode(m) {
-    mode = m;
-    btnSeed.classList.toggle("on", m === "seed");
-    btnKill.classList.toggle("on", m === "kill");
-    btnSeed.setAttribute("aria-pressed", m === "seed" ? "true" : "false");
-    btnKill.setAttribute("aria-pressed", m === "kill" ? "true" : "false");
-    updateHud();
-    refreshPads();
+    hudMode.textContent = waveOn ? "WAVE" : (gateOn ? "GATE ON" : "GATE 0");
+    hudMode.style.color = waveOn ? "#fef" : (gateOn ? "#e9f" : "#888");
   }
 
   function setV(v) {
@@ -290,122 +297,133 @@
     updateHud();
   }
 
-  function refreshPads() {
-    const nodes = padsRoot.children;
+  function snapshot() {
+    let any = false;
+    for (let e = 0; e < N_EL; e++) if (elV[e] > 0.06) { any = true; break; }
+    if (any) memory.set(elV);
+  }
+
+  function refreshStick() {
+    const nodes = rowsRoot.children;
     for (let e = 0; e < N_EL; e++) {
       const el = nodes[e];
       if (!el) continue;
-      let v = elV[e];
-      if (pulseOn && pulseI === e) v = Math.max(v, 1);
-      const hot = v > 0.06;
-      el.style.setProperty("--v", v.toFixed(3));
-      el.classList.toggle("hot", hot);
-      el.classList.toggle("seed", hot && mode === "seed");
-      el.classList.toggle("kill", hot && mode === "kill");
-      el.classList.toggle("pulse-mark", pulseOn && pulseI === e);
+      const shown = gateOn ? elV[e] : 0;
+      const w = waveAmp(e);
+      el.style.setProperty("--v", shown.toFixed(3));
+      el.style.setProperty("--w", w.toFixed(3));
+      el.classList.toggle("hot", shown > 0.06);
+      el.classList.toggle("wave", w > 0.18);
     }
+    const y = ((waveOn ? wavePos : thumbE) + 0.5) / N_EL;
+    thumb.style.top = (y * 100) + "%";
+    thumb.classList.toggle("on", waveOn || gateOn);
   }
 
-  function buildPads() {
-    padsRoot.innerHTML = "";
+  let thumbE = 7.5;
+
+  function buildRows() {
+    rowsRoot.innerHTML = "";
     for (let e = 0; e < N_EL; e++) {
       const row = document.createElement("div");
-      row.className = "pad";
+      row.className = "el-row";
       row.dataset.e = String(e);
-      row.setAttribute("role", "slider");
-      row.setAttribute("aria-valuemin", "0");
-      row.setAttribute("aria-valuemax", "1");
-      row.setAttribute("aria-label", "Electrode " + (e + 1) + " voltage");
       const fill = document.createElement("div");
-      fill.className = "fill";
-      const knob = document.createElement("div");
-      knob.className = "knob";
+      fill.className = "el-fill";
       row.appendChild(fill);
-      row.appendChild(knob);
-      padsRoot.appendChild(row);
+      rowsRoot.appendChild(row);
     }
   }
 
-  function padFromClient(clientX, clientY) {
-    const railR = rail.getBoundingClientRect();
-    const fieldR = field.getBoundingClientRect();
-    const inRail = clientX >= railR.left - 16 && clientX <= railR.right + 24;
-    if (!inRail) return -1;
-    const r = padsRoot.getBoundingClientRect();
-    const top = r.height > 8 ? r.top : fieldR.top;
-    const h = r.height > 8 ? r.height : fieldR.height;
-    if (h <= 0) return 0;
-    const t = (clientY - top) / h;
+  function rowFromY(clientY) {
+    const r = stick.getBoundingClientRect();
+    if (r.height <= 0) return 0;
+    const t = (clientY - r.top) / r.height;
     return Math.max(0, Math.min(N_EL - 1, (t * N_EL) | 0));
   }
 
-  function voltageFromX(e, clientX) {
-    const nodes = padsRoot.children;
-    const el = nodes[e];
-    const r = (el || padsRoot).getBoundingClientRect();
-    const pad = 14;
-    const t = (clientX - (r.left + pad)) / Math.max(1, r.width - pad * 2);
-    if (t < 0) return 0;
-    if (t > 1) return 1;
-    return t;
+  function polarityFromX(clientX) {
+    const r = stick.getBoundingClientRect();
+    const mid = r.left + r.width * 0.5;
+    const dx = clientX - mid;
+    const dead = Math.max(10, r.width * 0.08);
+    if (dx > dead) return 1;   // right = attract / on
+    if (dx < -dead) return 0;  // left = off
+    return -1;                 // center = 0, ignore
   }
 
-  function kickElectrode(e, amp) {
-    if (amp < 0.08) return;
-    const [y0, y1] = elRows(e);
-    const seed = mode === "seed";
-    const xMax = seed ? 6 : 12;
-    for (let y = y0; y < y1; y++) {
-      for (let x = 0; x < xMax && x < W; x++) {
-        const i = y * W + x;
-        const fall = Math.exp(-x / 2.3) * amp;
-        if (seed) {
-          I[i] = Math.min(1.25, I[i] + 0.72 * fall);
-          Q[i] *= 1 - 0.45 * fall;
-        } else {
-          I[i] *= 1 - 0.78 * fall;
-          Q[i] = Math.min(1.8, Q[i] + 0.55 * fall);
+  function paintGroup(eCenter, on) {
+    // a short brush so a diagonal swipe turns a group, not one sliver
+    for (let d = -1; d <= 1; d++) {
+      const e = eCenter + d;
+      if (e < 0 || e >= N_EL) continue;
+      const fall = d === 0 ? 1 : 0.55;
+      if (on) {
+        const v = Math.max(elV[e], fall);
+        if (v > elV[e]) {
+          elV[e] = v;
+          if (gateOn) attractAt(e, v, 1, true);
         }
+      } else {
+        if (elV[e] > 0.04) quenchAt(e, 0.9 * fall);
+        elV[e] = 0;
       }
     }
-  }
-
-  function setElV(e, v, kick) {
-    const prev = elV[e];
-    if (v < 0) v = 0;
-    else if (v > 1) v = 1;
-    elV[e] = v;
-    if (kick && v > 0.12 && v > prev + 0.04) kickElectrode(e, v);
+    thumbE = eCenter;
     interacted = true;
     hint.classList.add("hide");
-    refreshPads();
+    refreshStick();
+    updateHud();
   }
 
-  function hold(e) { setElV(e, 1, true); }
-  function unhold(e) { setElV(e, 0, false); }
+  function patternOn() {
+    gateOn = true;
+    let any = false;
+    for (let e = 0; e < N_EL; e++) if (elV[e] > 0.06) any = true;
+    if (!any) elV.set(memory);
+    for (let e = 0; e < N_EL; e++) if (elV[e] > 0.06) attractAt(e, elV[e], 1, true);
+    btnOn.classList.add("on");
+    btnOn.setAttribute("aria-pressed", "true");
+    refreshStick();
+    updateHud();
+  }
 
-  function startPulse(dir) {
-    pulseOn = true;
-    pulseDir = dir;
-    pulseI = dir > 0 ? 0 : N_EL - 1;
-    pulseAcc = 0;
+  function patternZero() {
+    snapshot();
+    for (let e = 0; e < N_EL; e++) {
+      if (elV[e] > 0.06) quenchAt(e, 0.55);
+      elV[e] = 0;
+    }
+    gateOn = false;
+    btnOn.classList.remove("on");
+    btnOn.setAttribute("aria-pressed", "false");
+    refreshStick();
+    updateHud();
+  }
+
+  function startWave() {
+    waveOn = true;
+    wavePos = 0;
+    waveDir = 1;
+    waveAcc = 0;
+    btnWave.classList.add("on");
     interacted = true;
     hint.classList.add("hide");
-    btnPulse.classList.add("on");
-    refreshPads();
+    refreshStick();
+    updateHud();
   }
 
-  function stopPulse() {
-    pulseOn = false;
-    btnPulse.classList.remove("on");
-    refreshPads();
+  function stopWave() {
+    waveOn = false;
+    btnWave.classList.remove("on");
+    refreshStick();
+    updateHud();
   }
 
   function resetField(kind) {
     I.fill(0);
     Q.fill(0);
     if (kind === "warm") {
-      // a few random filaments so the first frame looks like a DBD photo
       const nBlob = 9;
       for (let b = 0; b < nBlob; b++) {
         const x = 8 + ((Math.random() * (W - 14)) | 0);
@@ -438,86 +456,84 @@
     const cell = 8;
     let nw = Math.max(48, Math.min(96, (cssW / cell) | 0));
     let nh = Math.max(24, Math.min(48, (cssH / cell) | 0));
-    // keep even-ish aspect so hex domains have room
     if (nw !== W || nh !== H || !pix) {
       allocate(nw, nh);
       resetField("warm");
     }
   }
 
-  // ---------- input ----------
-  // Each row is a voltage slider. Finger X = voltage. Right = on, left = off.
   function onPtrDown(ev) {
-    const e = padFromClient(ev.clientX, ev.clientY);
-    if (e < 0) return;
+    const r = stick.getBoundingClientRect();
+    if (ev.clientX < r.left - 8 || ev.clientX > r.right + 8) return;
+    if (ev.clientY < r.top - 8 || ev.clientY > r.bottom + 8) return;
     ev.preventDefault();
-    ptrPad.set(ev.pointerId, e);
-    setElV(e, voltageFromX(e, ev.clientX), true);
+    const e = rowFromY(ev.clientY);
+    let on = polarityFromX(ev.clientX);
+    if (on < 0) on = 1; // tap on the center line still attracts that row
+    dragging.set(ev.pointerId, { e, on: !!on });
+    paintGroup(e, !!on);
   }
   function onPtrMove(ev) {
-    if (!ptrPad.has(ev.pointerId)) return;
+    const st = dragging.get(ev.pointerId);
+    if (!st) return;
     ev.preventDefault();
-    let e = ptrPad.get(ev.pointerId);
-    const next = padFromClient(ev.clientX, ev.clientY);
-    if (next >= 0) e = next;
-    ptrPad.set(ev.pointerId, e);
-    setElV(e, voltageFromX(e, ev.clientX), true);
+    const e = rowFromY(ev.clientY);
+    const pol = polarityFromX(ev.clientX);
+    if (pol >= 0) st.on = !!pol;
+    st.e = e;
+    paintGroup(e, st.on);
   }
   function onPtrUp(ev) {
-    if (!ptrPad.has(ev.pointerId)) return;
-    const e = ptrPad.get(ev.pointerId);
-    ptrPad.delete(ev.pointerId);
-    // snap: a right swipe latches ON, a left swipe kills it
-    const v = elV[e];
-    if (v < 0.22) setElV(e, 0, false);
-    else if (v > 0.72) setElV(e, 1, false);
+    dragging.delete(ev.pointerId);
   }
-  rail.addEventListener("pointerdown", onPtrDown);
+
+  stick.addEventListener("pointerdown", onPtrDown);
   window.addEventListener("pointermove", onPtrMove, { passive: false });
   window.addEventListener("pointerup", onPtrUp);
   window.addEventListener("pointercancel", onPtrUp);
 
-  btnSeed.addEventListener("click", () => setMode("seed"));
-  btnKill.addEventListener("click", () => setMode("kill"));
-  btnPulse.addEventListener("click", () => {
-    if (pulseOn) stopPulse();
-    else startPulse(1);
+  btnOn.addEventListener("click", () => patternOn());
+  btnZero.addEventListener("click", () => patternZero());
+  btnWave.addEventListener("click", () => {
+    if (waveOn) stopWave();
+    else startWave();
   });
   btnReset.addEventListener("click", () => {
-    stopPulse();
+    stopWave();
     elV.fill(0);
-    refreshPads();
+    memory.fill(0);
+    gateOn = true;
+    btnOn.classList.add("on");
     resetField("empty");
     hint.classList.remove("hide");
     interacted = false;
+    refreshStick();
+    updateHud();
   });
 
-  vSlider.addEventListener("input", () => {
-    setV((+vSlider.value) / 100);
-  });
+  vSlider.addEventListener("input", () => setV((+vSlider.value) / 100));
 
   window.addEventListener("keydown", (ev) => {
-    if (ev.repeat && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) return;
     const k = ev.key;
     if (k >= "1" && k <= "9") {
-      hold(k.charCodeAt(0) - 49);
+      paintGroup(k.charCodeAt(0) - 49, true);
       ev.preventDefault();
     } else if (k === "0") {
-      hold(9);
-      ev.preventDefault();
+      patternZero();
     } else if (k === "ArrowDown") {
-      startPulse(1);
+      startWave();
+      waveDir = 1;
       ev.preventDefault();
     } else if (k === "ArrowUp") {
-      startPulse(-1);
+      startWave();
+      waveDir = -1;
+      wavePos = N_EL - 1;
       ev.preventDefault();
-    } else if (k === "s" || k === "S") {
-      setMode("seed");
-    } else if (k === "k" || k === "K") {
-      setMode("kill");
-    } else if (k === "p" || k === "P" || k === " ") {
-      if (pulseOn) stopPulse();
-      else startPulse(1);
+    } else if (k === "o" || k === "O") {
+      patternOn();
+    } else if (k === "w" || k === "W" || k === "p" || k === "P" || k === " ") {
+      if (waveOn) stopWave();
+      else startWave();
       ev.preventDefault();
     } else if (k === "r" || k === "R") {
       btnReset.click();
@@ -527,16 +543,10 @@
       setV(V + 0.03);
     }
   });
-  window.addEventListener("keyup", (ev) => {
-    const k = ev.key;
-    if (k >= "1" && k <= "9") unhold(k.charCodeAt(0) - 49);
-    else if (k === "0") unhold(9);
-  });
 
-  // Safari: no bounce, no pinch-zoom, no double-tap zoom on the stage
   const swallow = (ev) => {
     const t = ev.target;
-    if (t && t.closest && t.closest("#v-wrap, #pads, #rail, #controls")) return;
+    if (t && t.closest && t.closest("#v-wrap, #stick, #rail, #controls")) return;
     ev.preventDefault();
   };
   document.addEventListener("touchmove", swallow, { passive: false });
@@ -547,7 +557,6 @@
   window.addEventListener("resize", resize);
   window.addEventListener("orientationchange", () => setTimeout(resize, 200));
 
-  // ---------- loop ----------
   let last = 0;
   function frame(t) {
     if (!last) last = t;
@@ -555,20 +564,13 @@
     last = t;
     if (dt > 0.08) dt = 0.08;
 
-    if (pulseOn) {
-      pulseAcc += dt;
-      while (pulseAcc >= PULSE_DT) {
-        pulseAcc -= PULSE_DT;
-        pulseI += pulseDir;
-        if (pulseI < 0 || pulseI >= N_EL) {
-          stopPulse();
-          break;
-        }
-        refreshPads();
-      }
+    if (waveOn) {
+      wavePos += waveDir * WAVE_SPEED * dt;
+      if (wavePos >= N_EL - 0.5) { wavePos = N_EL - 0.5; waveDir = -1; }
+      if (wavePos < 0.5) { wavePos = 0.5; waveDir = 1; }
+      refreshStick();
     }
 
-    // 1–2 CA steps per frame; sim dt is O(1) like the tuned prototype
     step(1);
     const budget = dt > 0.028 ? 2 : 1;
     if (budget === 2) step(1);
@@ -578,9 +580,9 @@
   }
 
   buildKernel();
-  buildPads();
-  setMode("seed");
+  buildRows();
   resize();
   updateHud();
+  refreshStick();
   requestAnimationFrame(frame);
 })();
