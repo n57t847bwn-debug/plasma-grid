@@ -39,9 +39,8 @@
 
   let V = 0.34;
   let mode = "seed"; // seed | kill
-  const held = new Set(); // electrode indices currently held
+  const elV = new Float32Array(N_EL); // per-electrode voltage, 0 = off, 1 = full
   const ptrPad = new Map(); // pointerId -> pad index
-  const paintOn = new Map(); // pointerId -> true/false while dragging
 
   let pulseOn = false;
   let pulseI = 0;
@@ -148,23 +147,24 @@
       I2[i] = v;
     }
 
-    // electrodes: seed nucleates at the edge; kill dumps charge and eats inward
-    if (held.size || pulseOn) {
-      const active = new Set(held);
-      if (pulseOn) active.add(pulseI);
+    // electrodes: each row is a voltage slider. amp 0 = off.
+    {
       const seed = mode === "seed";
-      for (const e of active) {
+      for (let e = 0; e < N_EL; e++) {
+        let amp = elV[e];
+        if (pulseOn && pulseI === e) amp = Math.max(amp, 1);
+        if (amp < 0.04) continue;
         const [y0, y1] = elRows(e);
         const xMax = seed ? 7 : 16;
         for (let y = y0; y < y1; y++) {
           for (let x = 0; x < xMax && x < W; x++) {
             const i = y * W + x;
             if (seed) {
-              const fall = Math.exp(-x / 2.15);
-              I2[i] = Math.min(1.25, I2[i] + 0.28 * fall * dt);
-              Q[i] *= 1 - 0.14 * fall;
+              const fall = Math.exp(-x / 2.15) * amp;
+              I2[i] = Math.min(1.25, I2[i] + 0.34 * fall * dt);
+              Q[i] *= 1 - 0.16 * fall;
             } else {
-              const fall = Math.exp(-x / 4.6);
+              const fall = Math.exp(-x / 4.6) * amp;
               I2[i] *= 1 - 0.62 * fall;
               Q[i] = Math.min(1.8, Q[i] + 0.36 * fall * dt);
             }
@@ -233,24 +233,25 @@
     ctx.drawImage(off, -dw * 0.01, -dh * 0.01, dw * 1.02, dh * 1.02);
 
     // electrode injection glow along the left lip
-    if (held.size || pulseOn) {
+    {
       const cellW = dw / W;
       const cellH = dh / H;
       const seed = mode === "seed";
-      const active = new Set(held);
-      if (pulseOn) active.add(pulseI);
-      ctx.globalAlpha = 0.55;
-      for (const e of active) {
+      for (let e = 0; e < N_EL; e++) {
+        let amp = elV[e];
+        if (pulseOn && pulseI === e) amp = Math.max(amp, 1);
+        if (amp < 0.04) continue;
         const [y0, y1] = elRows(e);
         const g = ctx.createLinearGradient(0, 0, cellW * 8, 0);
         if (seed) {
-          g.addColorStop(0, "rgba(230,120,255,0.85)");
+          g.addColorStop(0, "rgba(230,120,255," + (0.35 + 0.55 * amp).toFixed(3) + ")");
           g.addColorStop(1, "rgba(120,0,180,0)");
         } else {
-          g.addColorStop(0, "rgba(255,80,50,0.85)");
+          g.addColorStop(0, "rgba(255,80,50," + (0.35 + 0.55 * amp).toFixed(3) + ")");
           g.addColorStop(1, "rgba(80,0,0,0)");
         }
         ctx.fillStyle = g;
+        ctx.globalAlpha = 0.7;
         ctx.fillRect(0, y0 * cellH, cellW * 9, (y1 - y0) * cellH);
       }
     }
@@ -294,7 +295,10 @@
     for (let e = 0; e < N_EL; e++) {
       const el = nodes[e];
       if (!el) continue;
-      const hot = held.has(e) || (pulseOn && pulseI === e);
+      let v = elV[e];
+      if (pulseOn && pulseI === e) v = Math.max(v, 1);
+      const hot = v > 0.06;
+      el.style.setProperty("--v", v.toFixed(3));
       el.classList.toggle("hot", hot);
       el.classList.toggle("seed", hot && mode === "seed");
       el.classList.toggle("kill", hot && mode === "kill");
@@ -305,22 +309,28 @@
   function buildPads() {
     padsRoot.innerHTML = "";
     for (let e = 0; e < N_EL; e++) {
-      const b = document.createElement("div");
-      b.className = "pad";
-      b.dataset.e = String(e);
-      b.setAttribute("role", "button");
-      b.setAttribute("aria-label", "Electrode " + (e + 1));
-      padsRoot.appendChild(b);
+      const row = document.createElement("div");
+      row.className = "pad";
+      row.dataset.e = String(e);
+      row.setAttribute("role", "slider");
+      row.setAttribute("aria-valuemin", "0");
+      row.setAttribute("aria-valuemax", "1");
+      row.setAttribute("aria-label", "Electrode " + (e + 1) + " voltage");
+      const fill = document.createElement("div");
+      fill.className = "fill";
+      const knob = document.createElement("div");
+      knob.className = "knob";
+      row.appendChild(fill);
+      row.appendChild(knob);
+      padsRoot.appendChild(row);
     }
   }
 
   function padFromClient(clientX, clientY) {
     const railR = rail.getBoundingClientRect();
     const fieldR = field.getBoundingClientRect();
-    const inRail = clientX >= railR.left - 12 && clientX <= railR.right + 40;
-    const inLip = clientX >= fieldR.left && clientX <= fieldR.left + 56
-      && clientY >= fieldR.top && clientY <= fieldR.bottom;
-    if (!inRail && !inLip) return -1;
+    const inRail = clientX >= railR.left - 16 && clientX <= railR.right + 24;
+    if (!inRail) return -1;
     const r = padsRoot.getBoundingClientRect();
     const top = r.height > 8 ? r.top : fieldR.top;
     const h = r.height > 8 ? r.height : fieldR.height;
@@ -329,14 +339,26 @@
     return Math.max(0, Math.min(N_EL - 1, (t * N_EL) | 0));
   }
 
-  function kickElectrode(e) {
+  function voltageFromX(e, clientX) {
+    const nodes = padsRoot.children;
+    const el = nodes[e];
+    const r = (el || padsRoot).getBoundingClientRect();
+    const pad = 14;
+    const t = (clientX - (r.left + pad)) / Math.max(1, r.width - pad * 2);
+    if (t < 0) return 0;
+    if (t > 1) return 1;
+    return t;
+  }
+
+  function kickElectrode(e, amp) {
+    if (amp < 0.08) return;
     const [y0, y1] = elRows(e);
     const seed = mode === "seed";
     const xMax = seed ? 6 : 12;
     for (let y = y0; y < y1; y++) {
       for (let x = 0; x < xMax && x < W; x++) {
         const i = y * W + x;
-        const fall = Math.exp(-x / 2.3);
+        const fall = Math.exp(-x / 2.3) * amp;
         if (seed) {
           I[i] = Math.min(1.25, I[i] + 0.72 * fall);
           Q[i] *= 1 - 0.45 * fall;
@@ -348,27 +370,19 @@
     }
   }
 
-  function setPad(e, on) {
-    if (on) {
-      if (!held.has(e)) {
-        held.add(e);
-        kickElectrode(e);
-      }
-    } else {
-      held.delete(e);
-    }
+  function setElV(e, v, kick) {
+    const prev = elV[e];
+    if (v < 0) v = 0;
+    else if (v > 1) v = 1;
+    elV[e] = v;
+    if (kick && v > 0.12 && v > prev + 0.04) kickElectrode(e, v);
     interacted = true;
     hint.classList.add("hide");
     refreshPads();
   }
 
-  function hold(e) {
-    setPad(e, true);
-  }
-
-  function unhold(e) {
-    setPad(e, false);
-  }
+  function hold(e) { setElV(e, 1, true); }
+  function unhold(e) { setElV(e, 0, false); }
 
   function startPulse(dir) {
     pulseOn = true;
@@ -432,33 +446,34 @@
   }
 
   // ---------- input ----------
-  // Sticky pads: tap to arm (stays on), tap again to off. Drag paints the same on/off.
-  // No setPointerCapture — iOS Safari drops capture and was releasing the pad instantly.
+  // Each row is a voltage slider. Finger X = voltage. Right = on, left = off.
   function onPtrDown(ev) {
     const e = padFromClient(ev.clientX, ev.clientY);
     if (e < 0) return;
     ev.preventDefault();
-    const on = !held.has(e);
-    paintOn.set(ev.pointerId, on);
     ptrPad.set(ev.pointerId, e);
-    setPad(e, on);
+    setElV(e, voltageFromX(e, ev.clientX), true);
   }
   function onPtrMove(ev) {
-    if (!paintOn.has(ev.pointerId)) return;
-    const e = padFromClient(ev.clientX, ev.clientY);
-    if (e < 0) return;
-    if (e !== ptrPad.get(ev.pointerId)) {
-      ptrPad.set(ev.pointerId, e);
-      setPad(e, paintOn.get(ev.pointerId));
-    }
+    if (!ptrPad.has(ev.pointerId)) return;
+    ev.preventDefault();
+    let e = ptrPad.get(ev.pointerId);
+    const next = padFromClient(ev.clientX, ev.clientY);
+    if (next >= 0) e = next;
+    ptrPad.set(ev.pointerId, e);
+    setElV(e, voltageFromX(e, ev.clientX), true);
   }
   function onPtrUp(ev) {
-    paintOn.delete(ev.pointerId);
+    if (!ptrPad.has(ev.pointerId)) return;
+    const e = ptrPad.get(ev.pointerId);
     ptrPad.delete(ev.pointerId);
+    // snap: a right swipe latches ON, a left swipe kills it
+    const v = elV[e];
+    if (v < 0.22) setElV(e, 0, false);
+    else if (v > 0.72) setElV(e, 1, false);
   }
   rail.addEventListener("pointerdown", onPtrDown);
-  field.addEventListener("pointerdown", onPtrDown);
-  window.addEventListener("pointermove", onPtrMove);
+  window.addEventListener("pointermove", onPtrMove, { passive: false });
   window.addEventListener("pointerup", onPtrUp);
   window.addEventListener("pointercancel", onPtrUp);
 
@@ -470,7 +485,7 @@
   });
   btnReset.addEventListener("click", () => {
     stopPulse();
-    held.clear();
+    elV.fill(0);
     refreshPads();
     resetField("empty");
     hint.classList.remove("hide");

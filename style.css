@@ -52,11 +52,12 @@ html, body {
   background: #000;
 }
 
-/* Vertical column of independent metal pads along the LEFT edge. */
+/* Voltage sliders: one row per electrode. Swipe right = on, left = off. */
 #rail {
   position: relative;
   flex: 0 0 auto;
-  width: 84px;
+  width: min(42vw, 220px);
+  min-width: 148px;
   display: flex;
   flex-direction: column;
   touch-action: none;
@@ -105,65 +106,62 @@ html, body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 2px 8px 6px 18px;
+  gap: 3px;
+  padding: 2px 10px 6px 16px;
   touch-action: none;
 }
 
 .pad {
+  --v: 0;
   flex: 1 1 0;
-  min-height: 22px;
+  min-height: 16px;
   touch-action: none;
-  border: 1px solid #6a6660;
-  border-radius: 2px 7px 7px 2px;
+  border: 1px solid #5a564e;
+  border-radius: 12px;
   background:
-    linear-gradient(180deg, #b8b2a8 0%, #6a6660 22%, #3c3a38 50%, #2a2826 56%, #7a7670 100%);
+    linear-gradient(180deg, #1a1816 0%, #2a2824 50%, #141312 100%);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
-    0 0 0 1px #111;
+    inset 0 1px 3px #000,
+    0 0 0 1px #0a0a0a;
   cursor: pointer;
   position: relative;
+  overflow: hidden;
   -webkit-tap-highlight-color: transparent;
 }
 
-.pad:not(.hot) {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
-    0 0 0 1px #111,
-    0 0 10px rgba(180, 80, 255, 0.22);
-}
-
-.pad::after {
-  content: "";
+.pad .fill {
   position: absolute;
-  left: 5px;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  margin-top: -2.5px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #ddd, #555 55%, #222);
-  box-shadow: 0 0 0 1px #111;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--v) * 100%);
+  border-radius: 12px 0 0 12px;
+  pointer-events: none;
+  background: linear-gradient(90deg, #3a3834, #7a7670);
 }
 
-.pad.hot.seed {
-  border-color: #e9a;
-  background:
-    linear-gradient(180deg, #e8c6ff 0%, #a44ad8 30%, #4a1870 60%, #c070ff 100%);
-  box-shadow:
-    0 0 14px rgba(220, 80, 255, 0.85),
-    inset 0 0 10px rgba(255, 180, 255, 0.35);
+.pad.hot.seed .fill {
+  background: linear-gradient(90deg, #4a1870, #c070ff);
+  box-shadow: 0 0 12px rgba(220, 80, 255, 0.55);
 }
 
-.pad.hot.kill {
-  border-color: #f86;
+.pad.hot.kill .fill {
+  background: linear-gradient(90deg, #5a1010, #ff8060);
+  box-shadow: 0 0 12px rgba(255, 70, 50, 0.5);
+}
+
+.pad .knob {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 18px;
+  left: calc(var(--v) * (100% - 20px) + 1px);
+  border-radius: 10px;
+  pointer-events: none;
   background:
-    linear-gradient(180deg, #ffd0c4 0%, #e05030 30%, #5a1010 60%, #ff8060 100%);
-  box-shadow:
-    0 0 14px rgba(255, 70, 50, 0.85),
-    inset 0 0 10px rgba(255, 200, 160, 0.3);
+    linear-gradient(180deg, #d8d2c8 0%, #8a8680 40%, #4a4844 55%, #b8b2a8 100%);
+  border: 1px solid #ccc8c0;
+  box-shadow: 0 1px 3px #000, inset 0 1px 0 #fff8;
 }
 
 .pad.pulse-mark {
@@ -372,12 +370,12 @@ html, body {
 @media (orientation: landscape) and (max-height: 430px) {
   #controls { height: 70px; gap: 6px; padding-top: 6px; }
   #controls button { min-height: 50px; font-size: 13px; }
-  #rail { width: 76px; }
-  .pad { min-height: 18px; }
+  #rail { width: min(46vw, 200px); min-width: 132px; }
+  .pad { min-height: 14px; }
 }
 
 @media (orientation: landscape) and (min-height: 500px) {
   #controls { height: 88px; }
   #controls button { font-size: 16px; min-height: 64px; }
-  #rail { width: 92px; }
+  #rail { width: min(38vw, 240px); min-width: 160px; }
 }
