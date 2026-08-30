@@ -56,9 +56,11 @@ html, body {
 #rail {
   position: relative;
   flex: 0 0 auto;
-  width: 58px;
+  width: 84px;
   display: flex;
   flex-direction: column;
+  touch-action: none;
+  z-index: 3;
   background:
     linear-gradient(90deg, #070708 0%, #16151a 38%, #0c0c10 100%);
   border-right: 1px solid #3a3540;
@@ -103,13 +105,15 @@ html, body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 2px 7px 4px 14px;
+  gap: 4px;
+  padding: 2px 8px 6px 18px;
+  touch-action: none;
 }
 
 .pad {
   flex: 1 1 0;
-  min-height: 14px;
+  min-height: 22px;
+  touch-action: none;
   border: 1px solid #6a6660;
   border-radius: 2px 7px 7px 2px;
   background:
@@ -120,6 +124,15 @@ html, body {
     0 0 0 1px #111;
   cursor: pointer;
   position: relative;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pad:not(.hot) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    0 0 0 1px #111,
+    0 0 10px rgba(180, 80, 255, 0.22);
 }
 
 .pad::after {
@@ -359,12 +372,12 @@ html, body {
 @media (orientation: landscape) and (max-height: 430px) {
   #controls { height: 70px; gap: 6px; padding-top: 6px; }
   #controls button { min-height: 50px; font-size: 13px; }
-  #rail { width: 52px; }
-  .pad { min-height: 12px; }
+  #rail { width: 76px; }
+  .pad { min-height: 18px; }
 }
 
 @media (orientation: landscape) and (min-height: 500px) {
   #controls { height: 88px; }
   #controls button { font-size: 16px; min-height: 64px; }
-  #rail { width: 64px; }
+  #rail { width: 92px; }
 }

@@ -14,6 +14,7 @@
   const field = document.getElementById("field");
   const ctx = field.getContext("2d", { alpha: false });
   const padsRoot = document.getElementById("pads");
+  const rail = document.getElementById("rail");
   const hudV = document.getElementById("hud-v");
   const hudRegime = document.getElementById("hud-regime");
   const hudMode = document.getElementById("hud-mode");
@@ -40,6 +41,7 @@
   let mode = "seed"; // seed | kill
   const held = new Set(); // electrode indices currently held
   const ptrPad = new Map(); // pointerId -> pad index
+  const paintOn = new Map(); // pointerId -> true/false while dragging
 
   let pulseOn = false;
   let pulseI = 0;
@@ -303,32 +305,69 @@
   function buildPads() {
     padsRoot.innerHTML = "";
     for (let e = 0; e < N_EL; e++) {
-      const b = document.createElement("button");
-      b.type = "button";
+      const b = document.createElement("div");
       b.className = "pad";
       b.dataset.e = String(e);
+      b.setAttribute("role", "button");
       b.setAttribute("aria-label", "Electrode " + (e + 1));
       padsRoot.appendChild(b);
     }
   }
 
-  function padFromPoint(clientY) {
+  function padFromClient(clientX, clientY) {
+    const railR = rail.getBoundingClientRect();
+    const fieldR = field.getBoundingClientRect();
+    const inRail = clientX >= railR.left - 12 && clientX <= railR.right + 40;
+    const inLip = clientX >= fieldR.left && clientX <= fieldR.left + 56
+      && clientY >= fieldR.top && clientY <= fieldR.bottom;
+    if (!inRail && !inLip) return -1;
     const r = padsRoot.getBoundingClientRect();
-    if (r.height <= 0) return 0;
-    const t = (clientY - r.top) / r.height;
+    const top = r.height > 8 ? r.top : fieldR.top;
+    const h = r.height > 8 ? r.height : fieldR.height;
+    if (h <= 0) return 0;
+    const t = (clientY - top) / h;
     return Math.max(0, Math.min(N_EL - 1, (t * N_EL) | 0));
   }
 
-  function hold(e) {
-    held.add(e);
+  function kickElectrode(e) {
+    const [y0, y1] = elRows(e);
+    const seed = mode === "seed";
+    const xMax = seed ? 6 : 12;
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < xMax && x < W; x++) {
+        const i = y * W + x;
+        const fall = Math.exp(-x / 2.3);
+        if (seed) {
+          I[i] = Math.min(1.25, I[i] + 0.72 * fall);
+          Q[i] *= 1 - 0.45 * fall;
+        } else {
+          I[i] *= 1 - 0.78 * fall;
+          Q[i] = Math.min(1.8, Q[i] + 0.55 * fall);
+        }
+      }
+    }
+  }
+
+  function setPad(e, on) {
+    if (on) {
+      if (!held.has(e)) {
+        held.add(e);
+        kickElectrode(e);
+      }
+    } else {
+      held.delete(e);
+    }
     interacted = true;
     hint.classList.add("hide");
     refreshPads();
   }
 
+  function hold(e) {
+    setPad(e, true);
+  }
+
   function unhold(e) {
-    held.delete(e);
-    refreshPads();
+    setPad(e, false);
   }
 
   function startPulse(dir) {
@@ -393,31 +432,35 @@
   }
 
   // ---------- input ----------
-  padsRoot.addEventListener("pointerdown", (ev) => {
+  // Sticky pads: tap to arm (stays on), tap again to off. Drag paints the same on/off.
+  // No setPointerCapture — iOS Safari drops capture and was releasing the pad instantly.
+  function onPtrDown(ev) {
+    const e = padFromClient(ev.clientX, ev.clientY);
+    if (e < 0) return;
     ev.preventDefault();
-    padsRoot.setPointerCapture(ev.pointerId);
-    const e = padFromPoint(ev.clientY);
+    const on = !held.has(e);
+    paintOn.set(ev.pointerId, on);
     ptrPad.set(ev.pointerId, e);
-    hold(e);
-  });
-  padsRoot.addEventListener("pointermove", (ev) => {
-    if (!ptrPad.has(ev.pointerId)) return;
-    const e = padFromPoint(ev.clientY);
-    const prev = ptrPad.get(ev.pointerId);
-    if (e !== prev) {
-      unhold(prev);
+    setPad(e, on);
+  }
+  function onPtrMove(ev) {
+    if (!paintOn.has(ev.pointerId)) return;
+    const e = padFromClient(ev.clientX, ev.clientY);
+    if (e < 0) return;
+    if (e !== ptrPad.get(ev.pointerId)) {
       ptrPad.set(ev.pointerId, e);
-      hold(e);
+      setPad(e, paintOn.get(ev.pointerId));
     }
-  });
-  function ptrUp(ev) {
-    if (!ptrPad.has(ev.pointerId)) return;
-    unhold(ptrPad.get(ev.pointerId));
+  }
+  function onPtrUp(ev) {
+    paintOn.delete(ev.pointerId);
     ptrPad.delete(ev.pointerId);
   }
-  padsRoot.addEventListener("pointerup", ptrUp);
-  padsRoot.addEventListener("pointercancel", ptrUp);
-  padsRoot.addEventListener("lostpointercapture", ptrUp);
+  rail.addEventListener("pointerdown", onPtrDown);
+  field.addEventListener("pointerdown", onPtrDown);
+  window.addEventListener("pointermove", onPtrMove);
+  window.addEventListener("pointerup", onPtrUp);
+  window.addEventListener("pointercancel", onPtrUp);
 
   btnSeed.addEventListener("click", () => setMode("seed"));
   btnKill.addEventListener("click", () => setMode("kill"));
